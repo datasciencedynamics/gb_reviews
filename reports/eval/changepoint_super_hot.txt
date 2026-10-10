@@ -1,8 +1,0 @@
-Super Hot: 195 reviews, 138 discuss heat, 57 call it milder than expected
-
-Change point: 2022-02-20 (95% bootstrap interval 2018-01-15 to 2022-05-10)
-Permutation p = 0.3407, LR = 4.41
-Before: 38.2% milder than expected (n=123), mean stars 4.59
-After:  66.7% milder than expected (n=15), mean stars 3.93
-
-Saved reports/eval/changepoint_super_hot.json
