@@ -1,0 +1,381 @@
+"""Page layout. Self-contained (no imports from the pipeline) so the app folder
+can be copied into flask_apps on its own."""
+
+import math
+
+import pandas as pd
+from dash import dcc, html
+
+from .data import AppData
+from .figures import changepoint_figure
+
+SAUCES = ("original", "green", "super_hot", "spicy_yellow")
+SAUCE_LABELS = {
+    "all": "All sauces",
+    "original": "Original Red",
+    "green": "Green Habanero",
+    "super_hot": "Super Hot",
+    "spicy_yellow": "Spicy Yellow",
+}
+SAUCE_COLORS = {
+    "original": "#D7392B",
+    "green": "#4E9A55",
+    "super_hot": "#EE7A2B",
+    "spicy_yellow": "#E3B23C",
+}
+ASPECT_LABELS = {
+    "heat": "Heat",
+    "flavor": "Flavor",
+    "vinegar": "Vinegar",
+    "versatility": "Versatility",
+    "value": "Value",
+}
+POS, NEG = "#EE7A2B", "#6FA8DC"  # differ in lightness as well as hue
+
+
+################################################################################
+################################# Helpers ######################################
+################################################################################
+
+def _ok(x) -> bool:
+    return x is not None and not (isinstance(x, float) and math.isnan(x))
+
+
+def pct(x, digits: int = 0) -> str:
+    return f"{x:.{digits}%}" if _ok(x) else "—"
+
+
+def num(x, fmt: str = "{:,.0f}") -> str:
+    return fmt.format(x) if _ok(x) else "—"
+
+
+def dot(sauce: str):
+    return html.Span(className="dot", style={"background": SAUCE_COLORS[sauce]}, **{"aria-hidden": "true"})
+
+
+def h2(text: str, id_: str, size: str = "lg"):
+    return html.H2(text, id=id_, className=f"h2 h2-{size}")
+
+
+################################################################################
+################################ Sections ######################################
+################################################################################
+
+def header(data: AppData):
+    s = data.summary.get("scopes", {}).get("all", {})
+    y0 = (s.get("date_min") or "")[:4] or "2008"
+    y1 = (s.get("date_max") or "")[:4] or "2023"
+    return html.Header(className="header", children=[
+        html.Div(className="eyebrow-row", children=[
+            html.Div("Gringo Bandito Review Lab", className="eyebrow"),
+            html.Div("Data Science Dynamics", className="eyebrow"),
+        ]),
+        html.H1(
+            f"What {int(y1) - int(y0) + 1} years of buyers say about the sauce"
+            if y0.isdigit() and y1.isdigit() else "What buyers say about the sauce",
+            className="h1",
+        ),
+        html.P(
+            f"Every verified Amazon review of Gringo Bandito from {y0} to {y1}, "
+            "scored for heat, flavor, vinegar and use, then checked against what the label says.",
+            className="lede",
+        ),
+        dcc.RadioItems(
+            id="sauce-filter",
+            options=[{"label": SAUCE_LABELS[k], "value": k} for k in ("all",) + SAUCES],
+            value="all",
+            className="pills",
+            inputClassName="pill-input",
+            labelClassName="pill",
+        ),
+    ])
+
+
+def kpi_tiles(data: AppData, scope: str):
+    s = data.summary.get("scopes", {}).get(scope, {})
+    y0, y1 = (s.get("date_min") or "")[:4], (s.get("date_max") or "")[:4]
+    tiles = [
+        ("Reviews analyzed", num(s.get("n")), "Amazon US, labeled"),
+        ("Date range", f"{y0}–{y1}" if y0 else "—", "Amazon Reviews’23 release"),
+        ("Average rating", num(s.get("avg_rating"), "{:.2f}"), "Out of 5 stars"),
+        ("Discuss heat", pct(s.get("heat_mention_share")), "Share of reviews"),
+    ]
+    return [
+        html.Div(className="tile", children=[
+            html.Div(label, className="muted small"),
+            html.Div(value, className="mono tile-value"),
+            html.Div(note, className="muted small"),
+        ])
+        for label, value, note in tiles
+    ]
+
+
+def hero(data: AppData):
+    cp = data.changepoint
+    ok = cp.get("status") == "ok"
+    b, a = cp.get("before", {}), cp.get("after", {})
+    if ok:
+        p = cp["p_value"]
+        verdict = (
+            f"Permutation test p = {p:.3f} across {cp['n']:,} heat reviews."
+            if p >= 0.001 else f"Permutation test p < 0.001 across {cp['n']:,} heat reviews."
+        )
+    else:
+        verdict = "Change-point results appear here once the pipeline has run."
+    stats = [
+        ("Before", f"{pct(b.get('rate'))} milder than expected", f"n = {num(b.get('n'))}"),
+        ("After", f"{pct(a.get('rate'))} milder than expected", f"n = {num(a.get('n'))}"),
+        ("Average stars", f"{num(b.get('mean_rating'), '{:.2f}')} → {num(a.get('mean_rating'), '{:.2f}')}", "before → after"),
+    ]
+    return html.Section(className="card hero", **{"aria-labelledby": "hero-h"}, children=[
+        html.Div(className="row-between", children=[
+            h2("Did Super Hot cool off?", "hero-h", "xl"),
+            html.Div("Super Hot · trailing 6 months · 95% CI", className="mono muted small"),
+        ]),
+        html.P(
+            "Among Super Hot reviews that talk about heat, the share saying it is milder than "
+            "expected. The dashed line is where a change-point model places the shift; the "
+            "shaded band is its bootstrap 95% interval.",
+            className="body",
+        ),
+        dcc.Graph(figure=changepoint_figure(cp), config={"displayModeBar": False}),
+        html.Div(className="hero-stats", children=[
+            html.Div(className="hero-stat", children=[
+                html.Div(k, className="muted small"),
+                html.Div(v, className="mono"),
+                html.Div(n, className="muted small"),
+            ]) for k, v, n in stats
+        ]),
+        html.P(verdict, className="muted small"),
+    ])
+
+
+def _felt_heat_bar(row) -> html.Div:
+    if not _ok(row.get("too_mild")):
+        return html.Span("too few heat reviews", className="muted small")
+    segs = [("too_mild", NEG, "milder"), ("as_expected", "#8C8378", "as expected"), ("too_hot", POS, "hotter")]
+    return html.Div(className="felt", children=[
+        html.Div(className="stack", children=[
+            html.Div(style={"width": f"{row[k] * 100:.1f}%", "background": c}, title=f"{lab}: {row[k]:.0%}")
+            for k, c, lab in segs
+        ]),
+        html.Div(
+            f"{row['too_mild']:.0%} milder · {row['as_expected']:.0%} as expected · {row['too_hot']:.0%} hotter",
+            className="muted small",
+        ),
+    ])
+
+
+def heat_section(data: AppData):
+    h = data.heat
+    if h.empty:
+        h = pd.DataFrame({"sauce": list(SAUCES)})
+    max_shu = 3600
+    rows = []
+    for _, r in h.iterrows():
+        s = r["sauce"]
+        shu = r.get("labeled_shu")
+        rows.append(html.Tr([
+            html.Th(scope="row", children=html.Div(className="sauce-name", children=[dot(s), SAUCE_LABELS[s]])),
+            html.Td(html.Div(className="bar-row", children=[
+                html.Div(className="track", children=html.Div(
+                    className="fill",
+                    style={"width": f"{(shu or 0) / max_shu * 100:.1f}%", "background": SAUCE_COLORS[s]},
+                )),
+                html.Span(num(shu), className="mono"),
+            ])),
+            html.Td(num(r.get("earlier_shu")), className="mono"),
+            html.Td(num(r.get("lab_shu")) if _ok(r.get("lab_shu")) else "pending", className="mono muted"),
+            html.Td(_felt_heat_bar(r)),
+        ]))
+    src = data.summary.get("shu_sources", {})
+    return html.Section(**{"aria-labelledby": "heat-h"}, className="stack-lg", children=[
+        h2("Three ways to measure heat", "heat-h"),
+        html.P(
+            "Scoville units on the bottle today, earlier published tests, and a lab HPLC test of "
+            "current bottles, next to how hot reviewers say each sauce feels.",
+            className="muted",
+        ),
+        html.Div(className="table-wrap", children=html.Table(className="table", children=[
+            html.Thead(html.Tr([html.Th(c, scope="col") for c in
+                               ("Sauce", "Label today (SHU)", "Earlier test", "Lab HPLC", "Felt heat (reviews)")])),
+            html.Tbody(rows),
+        ])),
+        html.Div(
+            f"Labels: {src.get('labeled', 'brand store')}. Earlier tests: {src.get('earlier', 'Pepper Geek')}.",
+            className="muted small",
+        ),
+    ])
+
+
+def _aspect_row(r) -> html.Div:
+    net = r.get("net") if r is not None else None
+    if _ok(net):
+        width = abs(net) * 50
+        style = {"width": f"{width:.1f}%", "background": POS if net >= 0 else NEG}
+        style["left" if net >= 0 else "right"] = "50%"
+        value = f"{net:+.2f} · {r['mention_share']:.0%}"
+    else:
+        style, value = {"width": "0"}, "— · too few"
+    return html.Div(className="aspect", children=[
+        html.Div(className="row-between small", children=[
+            html.Span(ASPECT_LABELS[r["aspect"]] if r is not None else ""),
+            html.Span(value, className="mono muted"),
+        ]),
+        html.Div(className="diverge", children=[html.Div(className="mid"), html.Div(className="dfill", style=style)]),
+    ])
+
+
+def aspects_section(data: AppData):
+    a = data.aspects
+    cards = []
+    for s in SAUCES:
+        sub = a[a["sauce"] == s] if not a.empty else pd.DataFrame()
+        n = int(sub["n_reviews"].iat[0]) if not sub.empty else None
+        rows = (
+            [_aspect_row(r) for _, r in sub.iterrows()]
+            if not sub.empty
+            else [_aspect_row({"aspect": k, "net": None}) for k in ASPECT_LABELS]
+        )
+        cards.append(html.Div(className="card aspect-card", children=[
+            html.Div(className="sauce-name strong", children=[dot(s), SAUCE_LABELS[s]]),
+            html.Div(f"{num(n)} reviews", className="muted small"),
+            *rows,
+        ]))
+    return html.Section(**{"aria-labelledby": "aspect-h"}, className="stack-lg", children=[
+        h2("What people talk about, sauce by sauce", "aspect-h"),
+        html.P(
+            "Net sentiment per aspect, from −1 (all complaints) to +1 (all praise), and the share "
+            "of reviews that mention it. Orange leans positive, blue leans negative.",
+            className="muted",
+        ),
+        html.Div(className="cards", children=cards),
+    ])
+
+
+def foods_children(data: AppData, scope: str):
+    f = data.foods
+    f = f[f["scope"] == scope] if not f.empty else f
+    if f.empty:
+        return [html.Span("No food mentions yet.", className="muted small")]
+    top = f["n"].max()
+    return [
+        html.Span(className="chip", style={"fontSize": f"{13 + 9 * r['n'] / top:.0f}px"},
+                  children=[r["food"], " ", html.Span(num(r["n"]), className="mono muted")])
+        for _, r in f.iterrows()
+    ]
+
+
+def rivals_children(data: AppData, scope: str):
+    c = data.competitors
+    c = c[c["scope"] == scope] if not c.empty else c
+    if c.empty:
+        return [html.Span("No competitor mentions yet.", className="muted small")]
+    rows = []
+    for _, r in c.iterrows():
+        n = r["n"]
+        segs = [("gb_better", POS, "Gringo Bandito preferred"), ("similar", "#8C8378", "about the same"),
+                ("gb_worse", NEG, "other brand preferred"), ("unclear", "#3A322B", "unclear")]
+        rows.append(html.Div(className="rival", children=[
+            html.Span(r["brand"], className="rival-name"),
+            html.Div(className="stack", children=[
+                html.Div(style={"width": f"{r[k] / n * 100:.1f}%", "background": col}, title=f"{lab}: {r[k]}")
+                for k, col, lab in segs
+            ]),
+            html.Span(f"{n} · {r['gb_better'] / n:.0%} GB", className="mono muted small rival-n"),
+        ]))
+    return rows
+
+
+def fans_children(data: AppData, scope: str):
+    f = data.fans
+    f = f[f["scope"] == scope] if not f.empty else f
+    groups = list(f.itertuples()) if not f.empty else []
+    if not groups:
+        return [html.Span("Pending.", className="muted small")]
+    out = []
+    for g in groups:
+        lines = [("Reviews", num(g.n)), ("Average stars", num(g.avg_rating, "{:.2f}")),
+                 ("Mention reordering", pct(g.reorder_share))]
+        if scope == "all":
+            lines.append(("Most discussed sauce", g.top_sauce or "—"))
+        out.append(html.Div(className="fan-card", children=[
+            html.Div(g.group, className="strong"),
+            *[html.Div(className="row-between small", children=[html.Span(k), html.Span(v, className="mono")])
+              for k, v in lines],
+        ]))
+    return out
+
+
+def methods_section(data: AppData):
+    v = data.summary.get("validation", {})
+    kap = v.get("kappa", {})
+    rho = v.get("star_rho", {})
+    aspect_k = [kap.get(a) for a in ASPECT_LABELS if _ok(kap.get(a))]
+    k_text = (
+        f"A second model ({v.get('check_model')}) relabeled {num(v.get('n_overlap'))} reviews. "
+        f"Cohen's kappa ranged {min(aspect_k):.2f} to {max(aspect_k):.2f} across aspects."
+        if aspect_k else "A second model relabels a random 10% sample; agreement is reported as Cohen's kappa."
+    )
+    r_text = (
+        f"Aspect sentiment tracks star ratings (Spearman rho: heat {rho.get('heat', float('nan')):.2f}, "
+        f"flavor {rho.get('flavor', float('nan')):.2f})."
+        if rho else "Aspect sentiment is checked against star ratings."
+    )
+    items = [
+        ("Data", f"McAuley Lab Amazon Reviews’23, filtered to Gringo Bandito listings. "
+                 f"Academic release, no scraping. {data.summary.get('citation', '')}"),
+        ("Labeling", f"{v.get('primary_model') or 'A language model'} tags each review against a fixed "
+                     "schema: five aspects, heat direction, foods, competitor comparisons."),
+        ("Validation", f"{k_text} {r_text}"),
+        ("Limits", "Reviews end September 2023 and are self-selected. Cells built on fewer than five "
+                   "reviews are suppressed. Lab heat values describe bottles bought in 2026."),
+    ]
+    return html.Section(**{"aria-labelledby": "method-h"}, className="methods", children=[
+        html.Div(className="methods-head", children=[
+            h2("Methods", "method-h", "md"),
+            html.P("Every number on this page traces back to a review count and a source.", className="muted small"),
+        ]),
+        html.Div(className="methods-grid", children=[
+            html.Div(children=[html.Div(t, className="strong"), html.P(b, className="body small")])
+            for t, b in items
+        ]),
+    ])
+
+
+def page(data: AppData):
+    banner = [] if data.ready else [html.Div(
+        "No pipeline output found. Run `make full_pipeline` (or set GB_APP_DATA) to fill this page.",
+        className="banner",
+    )]
+    return html.Div(className="page", children=html.Main(className="wrap", children=[
+        *banner,
+        header(data),
+        html.Section(id="kpis", className="tiles", **{"aria-label": "Summary"}, children=kpi_tiles(data, "all")),
+        hero(data),
+        heat_section(data),
+        aspects_section(data),
+        html.Div(className="two-up", children=[
+            html.Section(className="card stack", **{"aria-labelledby": "food-h"}, children=[
+                h2("What it goes on", "food-h", "md"),
+                html.P("Foods named in reviews, sized by mentions.", className="muted small"),
+                html.Div(id="foods", className="chips", children=foods_children(data, "all")),
+            ]),
+            html.Section(className="card stack", **{"aria-labelledby": "comp-h"}, children=[
+                h2("Compared against", "comp-h", "md"),
+                html.P("Other brands reviewers bring up, and which way the comparison goes.",
+                       className="muted small"),
+                html.Div(id="rivals", className="stack", children=rivals_children(data, "all")),
+            ]),
+        ]),
+        html.Section(className="card stack", **{"aria-labelledby": "fan-h"}, children=[
+            h2("Came for the band, stayed for the sauce?", "fan-h", "md"),
+            html.P("Reviewers who mention The Offspring compared with everyone else.", className="muted small"),
+            html.Div(id="fans", className="fans", children=fans_children(data, "all")),
+        ]),
+        methods_section(data),
+        html.Footer(className="footer", children=[
+            html.Div("Leon Shpaner · Data Science Dynamics"),
+            html.Div("Independent analysis. Not affiliated with Gringo Bandito."),
+        ]),
+    ]))

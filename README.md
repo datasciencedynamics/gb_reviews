@@ -13,6 +13,7 @@ change-point model locates and tests any shift.
 ```
 make create_folders
 make requirements
+cp .env.example .env              # add ANTHROPIC_API_KEY
 
 make data_gen                     # stream the dataset, keep Gringo Bandito rows (slow, once)
 make preprocess                   # clean, map listings to sauces -> data/processed/reviews.parquet
