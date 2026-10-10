@@ -1,0 +1,26 @@
+Labeled 1,253 of 1,253 reviews
+
+Inter-model agreement on 125 reviews:
+  heat                         kappa 0.93 (almost perfect), agreement 96.0%
+  flavor                       kappa 0.52 (moderate), agreement 76.8%
+  vinegar                      kappa 1.00 (almost perfect), agreement 100.0%
+  versatility                  kappa 0.76 (substantial), agreement 90.4%
+  value                        kappa 0.91 (almost perfect), agreement 97.6%
+  heat_direction               kappa 0.85 (almost perfect), agreement 92.0%
+  mentions_recipe_change       kappa 0.00 (poor), agreement 98.4%
+  mentions_offspring           kappa 0.95 (almost perfect), agreement 99.2%
+  mentions_reorder             kappa 0.90 (almost perfect), agreement 97.6%
+  heat_mentioned               kappa 0.93 (almost perfect), agreement 96.8%
+  flavor_mentioned             kappa 0.42 (moderate), agreement 78.4%
+  vinegar_mentioned            kappa 1.00 (almost perfect), agreement 100.0%
+  versatility_mentioned        kappa 0.77 (substantial), agreement 91.2%
+  value_mentioned              kappa 0.90 (almost perfect), agreement 97.6%
+
+Aspect sentiment vs stars (Spearman):
+  heat         rho 0.60  n=534
+  flavor       rho 0.65  n=1083
+  vinegar      rho 0.74  n=74
+  versatility  rho 0.43  n=345
+  value        rho 0.75  n=257
+
+Saved reports/eval/validation.json
