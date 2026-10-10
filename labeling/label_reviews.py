@@ -55,21 +55,28 @@ def already_labeled(path: Path) -> set:
 
 async def label_one(client, model: str, row: dict, max_retries: int = 6) -> dict:
     """Label one review, retrying transient API errors with backoff."""
+    from anthropic import APIConnectionError
+
     text = row["text"][:MAX_REVIEW_CHARS]
     msg = user_message(row["sauce"], row["rating"], row["title"], text)
+    tool_choice = {"type": "tool", "name": TOOL_NAME}
     for attempt in range(max_retries):
         try:
             resp = await client.messages.create(
                 model=model,
                 max_tokens=1024,
-                system=SYSTEM_PROMPT,
+                system=SYSTEM_PROMPT
+                + f"\nAlways respond by calling the {TOOL_NAME} tool.",
                 tools=[TOOL],
-                tool_choice={"type": "tool", "name": TOOL_NAME},
+                tool_choice=tool_choice,
                 messages=[{"role": "user", "content": msg}],
             )
             block = next(
-                b for b in resp.content if getattr(b, "type", "") == "tool_use"
+                (b for b in resp.content if getattr(b, "type", "") == "tool_use"),
+                None,
             )
+            if block is None:
+                continue  # model answered without the tool; ask again
             return {
                 "review_id": row["review_id"],
                 "model": model,
@@ -78,8 +85,13 @@ async def label_one(client, model: str, row: dict, max_retries: int = 6) -> dict
             }
         except Exception as e:  # noqa: BLE001 - surface any failure in the file
             status = getattr(e, "status_code", None)
-            from anthropic import APIConnectionError
-            retryable = status in (408, 409, 429, 500, 502, 503, 504, 529) or isinstance(e, APIConnectionError)
+            # Some models reject forced tool use; fall back to auto once
+            if status == 400 and "tool_choice" in str(e) and tool_choice["type"] == "tool":
+                tool_choice = {"type": "auto"}
+                continue
+            retryable = status in (408, 409, 429, 500, 502, 503, 504, 529) or isinstance(
+                e, APIConnectionError
+            )
             if attempt == max_retries - 1 or not retryable:
                 return {
                     "review_id": row["review_id"],
@@ -89,6 +101,13 @@ async def label_one(client, model: str, row: dict, max_retries: int = 6) -> dict
                     "error": f"{type(e).__name__}: {e}",
                 }
             await asyncio.sleep(min(60, 2**attempt + random.random()))
+    return {
+        "review_id": row["review_id"],
+        "model": model,
+        "schema_version": LABEL_SCHEMA_VERSION,
+        "labels": None,
+        "error": "no tool call after retries",
+    }
 
 
 async def run(rows: list, model: str, output_file: Path, concurrency: int) -> tuple:
