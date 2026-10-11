@@ -383,8 +383,8 @@ def build_report_card(data, url: str = "", author: str = "") -> bytes:
     v = data.summary.get("validation", {})
     primary = _model_name(v.get("primary_model")) or "a language model"
     check = _model_name(v.get("check_model"))
-    note = ("Source: McAuley Lab Amazon Reviews'23 (Hou et al., 2024), an academic research "
-            f"release. Each review was labeled by {primary}"
+    note = ("Source: public Amazon customer reviews, via McAuley Lab's Amazon Reviews'23 "
+            f"research dataset (Hou et al., 2024). Each review was labeled by {primary}"
             + (f"; {check} relabeled a 10% sample to check agreement" if check else "")
             + ". An independent analysis, not affiliated with or endorsed by Gringo Bandito "
             "or Dexter Holland.")

@@ -524,7 +524,8 @@ def footer(data, tech_path: str):
     y1 = years(data)[1]
     return html.Footer(className="footer", children=[
         html.P([
-            "Reviews: McAuley Lab Amazon Reviews’23, an academic research release. ",
+            "Source: public Amazon customer reviews, via McAuley Lab's Amazon Reviews’23 "
+            "research dataset. ",
             data.summary.get("citation", ""),
             " An independent analysis; not affiliated with or endorsed by Gringo Bandito "
             "or Dexter Holland.",
