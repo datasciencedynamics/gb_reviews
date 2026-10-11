@@ -202,6 +202,14 @@ def fmt_p(p) -> str:
         return "—"
     return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
 
+def model_name(model_id):
+    """'claude-haiku-5-5' -> 'Claude Haiku 5.5'."""
+    if not model_id:
+        return None
+    parts = model_id.split("-")
+    if parts[0] == "claude" and len(parts) >= 4:
+        return f"Claude {parts[1].title()} {'.'.join(parts[2:])}"
+    return model_id
 
 def kappa_band(k) -> str:
     if not _ok(k):
@@ -359,15 +367,14 @@ OVERVIEW_SECTIONS = [
     ("sec-howto", "How to Read"),
 ]
 TECH_SECTIONS = [
-    ("tech-methods", "Methods"),
     ("tech-heat", "Heat Comparison"),
     ("tech-time", "Over Time"),
     ("tech-validation", "Label Validation"),
     ("tech-aspects", "Aspect Detail"),
     ("tech-scoville", "Scoville"),
+    ("tech-methods", "Methods"),
     ("tech-data", "Data Notes"),
 ]
-
 
 def logo_link():
     return html.A(
@@ -452,13 +459,13 @@ def overview_nav(tech_path: str):
     return html.Nav(className="page-nav", **{"aria-label": "Sections"}, children=[
         nav_label(),
         *[html.A(label, href=f"#{a}", className="nav-btn") for a, label in OVERVIEW_SECTIONS],
-        dcc.Link("Technical details →", href=tech_path, className="nav-btn nav-strong"),
+        dcc.Link("Technical details", href=tech_path, className="nav-btn nav-strong"),
     ])
 
 
 def tech_nav(home: str):
     return html.Nav(className="page-nav", **{"aria-label": "Sections"}, children=[
-        dcc.Link("← Back to overview", href=home, className="nav-btn nav-strong"),
+        dcc.Link("Back to overview", href=home, className="nav-btn nav-strong"),
         nav_label(),
         *[html.A(label, href=f"#{a}", className="nav-btn") for a, label in TECH_SECTIONS],
     ])
@@ -824,13 +831,19 @@ def tech_methods(data):
                      "variety-pack variations. Each child product ID was matched to its "
                      "flavor by hand; variety packs and unmatched IDs get their sauce from the "
                      "review text instead (the sauces the review discusses)."]),
-            html.Li([html.B("Labeling. "),
-                     f"{v.get('primary_model') or 'A language model'} read each review and "
-                     "filled a fixed schema through a forced tool call: sentiment for heat, "
-                     "flavor, vinegar, versatility and value; heat direction (milder than "
-                     "expected, as expected, hotter); sauces discussed; foods; competitor "
-                     "comparisons; and mentions of a recipe change, The Offspring, and "
-                     "reordering."]),
+            html.Li([html.B("Labeling models. "),
+                     f"Every review was labeled by Anthropic's "
+                     f"{model_name(v.get('primary_model')) or 'Claude'} through the Anthropic "
+                     "API, one review per request, filling a fixed schema through a forced "
+                     "tool call: sentiment for heat, flavor, vinegar, versatility and value; "
+                     "heat direction (milder than expected, as expected, hotter); sauces "
+                     "discussed; foods; competitor comparisons; and mentions of a recipe "
+                     "change, The Offspring, and reordering. A random 10% was relabeled "
+                     f"independently by {model_name(v.get('check_model')) or 'a second model'} "
+                     "to measure agreement (see Label validation). The prompt and schema are "
+                     "in the repository (labeling/schema.py). Labels come from a single pass "
+                     "at the API's default sampling settings, so a rerun can differ slightly "
+                     "on borderline reviews."]),
             html.Li([html.B("Statistics. "),
                      "Shares carry Wilson 95% intervals. Sauce comparisons use Fisher's exact "
                      "test. The change over time is a single change point in a Bernoulli rate, "
@@ -976,7 +989,7 @@ def tech_validation(data):
               for a in ASPECT_LABELS if a in rho]
     return tech_section("tech-validation", "Label validation", [
         html.P(f"No reviews were hand coded. Two independent checks instead: a second model "
-               f"({v.get('check_model') or 'pending'}) relabeled a random "
+               f"({model_name(v.get('check_model')) or 'pending'}) relabeled a random "
                f"{num(v.get('n_overlap'))} reviews with the same prompt and schema, and each "
                "aspect's sentiment was compared with the reviewer's star rating.",
                className="body"),
@@ -1047,12 +1060,12 @@ def technical_layout(app, data, home, tech_path):
     return html.Div(className="page-body", children=[
         tech_header(app),
         tech_nav(home),
-        tech_methods(data),
         tech_heat(data),
         tech_time(data),
         tech_validation(data),
         tech_aspects(data),
         tech_scoville(data),
+        tech_methods(data),
         tech_data(data),
         footer(data, tech_path),
     ])
