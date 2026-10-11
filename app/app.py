@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 ################################################################################
 PREFIX = os.environ.get("GB_REVIEWS_URL_PREFIX", "/")
 TITLE = "Gringo Bandito Review Lab"
-AUTHOR = "Leon Shpaner, M.S."
+AUTHOR = "Leon Shpaner, M.S., Maxime Boulat"
 REPO = "https://github.com/datasciencedynamics/gb_reviews"
 FONTS = (
     "https://fonts.googleapis.com/css2?family=Anton"
@@ -267,7 +267,7 @@ def empty_figure(message: str, height: int = 300) -> go.Figure:
     return fig
 
 
-def heat_gap_figure(heat: pd.DataFrame) -> go.Figure:
+def heat_gap_figure(heat: pd.DataFrame, show_ci: bool = True) -> go.Figure:
     """Share of heat reviews calling each sauce milder than expected, with
     Wilson 95% intervals. Value and n sit in the axis label so nothing collides
     with the error bars and the chart keeps its width on a phone."""
@@ -292,7 +292,7 @@ def heat_gap_figure(heat: pd.DataFrame) -> go.Figure:
     upper = max((r + h for r, h in zip(rates, hi)), default=0.5)
     fig = go.Figure(go.Bar(
         y=ticks, x=rates, orientation="h", marker=dict(color=colors),
-        error_x=dict(type="data", symmetric=False, array=hi, arrayminus=lo,
+        error_x=dict(type="data", visible=show_ci, symmetric=False, array=hi, arrayminus=lo,
                      color=INK, thickness=1.5, width=6),
         hovertemplate="%{x:.0%} milder than expected<extra></extra>",
     ))
@@ -519,11 +519,11 @@ def overview_heat(data, tech_path):
             "expect. The one named Super Hot is where expectations and experience part ways.",
             className="body",
         ),
-        dcc.Graph(figure=heat_gap_figure(data.heat_single),
+        dcc.Graph(figure=heat_gap_figure(data.heat_single, show_ci=False),
                   config={"displayModeBar": False, "responsive": True}),
         html.P(heat_story(data), className="callout"),
         html.P("Counts only reviews about a single sauce, so each verdict clearly belongs "
-               "to it. Lines show the range the true share likely falls in.",
+               "to it.",
                className="note"),
     ])
 
@@ -898,6 +898,10 @@ def tech_heat(data):
         ),
         dcc.Graph(id="heat-gap", figure=heat_gap_figure(data.heat_single),
                   config={"displayModeBar": False, "responsive": True}),
+        html.P("The capped horizontal lines are 95% Wilson confidence intervals (CI) for "
+               "the estimated share of heat reviews calling each sauce milder than expected. "
+               "They show uncertainty in that proportion, not outliers or the spread of "
+               "individual ratings.", className="note"),
         html.Div(id="heat-stats", children=heat_stats(data, "single")),
         heat_detail_table(data),
         html.P(f"Bars are hidden below {MIN_N_BAR} heat reviews; the table keeps every "
