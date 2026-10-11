@@ -263,14 +263,15 @@ p.muted {
   display: inline-flex;
   align-items: center;
   min-height: 36px;
-  padding: 0 14px;
+  padding: 0 11px;
   border-radius: 999px;
   border: 1px solid var(--line);
   color: var(--ink-2);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .nav-btn:hover {
@@ -337,9 +338,10 @@ p.muted {
 }
 
 .pill {
-  display: inline-flex;
+  display: inline-flex !important;
   align-items: center;
   min-height: 44px;
+  justify-content: center;
   padding: 0 18px;
   border-radius: 999px;
   border: 1px solid var(--line);

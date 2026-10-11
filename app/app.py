@@ -18,6 +18,7 @@ Run locally:
 
 import argparse
 import base64
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -26,9 +27,21 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, State, dcc, html
+from dash import Dash, Input, Output, State, dcc, html, no_update
 
 HERE = Path(__file__).resolve().parent
+
+## Customer report card PDF (report_card.py next to this file). Loaded by file
+## path under a unique name so it cannot collide with other apps in the
+## flask_apps launcher. Without reportlab the app still runs; the button hides.
+try:
+    _spec = importlib.util.spec_from_file_location(
+        "gb_reviews_report_card", HERE / "report_card.py")
+    report_card = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(report_card)
+except (ImportError, FileNotFoundError) as _e:
+    report_card = None
+    print(f"gb_reviews: report card disabled ({_e}); pip install reportlab svglib")
 
 ################################################################################
 # App settings
@@ -274,24 +287,30 @@ def empty_figure(message: str, height: int = 300) -> go.Figure:
     fig.add_annotation(text=message, showarrow=False, font=dict(size=15, color=FAINT))
     return fig
 
-
-def heat_gap_figure(heat: pd.DataFrame, show_ci: bool = True) -> go.Figure:
+def heat_gap_figure(heat: pd.DataFrame, show_ci: bool = True, plain: bool = False) -> go.Figure:
     """Share of heat reviews calling each sauce milder than expected, with
     Wilson 95% intervals. Value and n sit in the axis label so nothing collides
-    with the error bars and the chart keeps its width on a phone."""
+    with the error bars and the chart keeps its width on a phone.
+    plain=True (overview): drops sauces with too few heat reviews and writes
+    "26 reviews" instead of "n=26"."""
     if heat.empty:
         return empty_figure("Data pending")
+    pad = "\u00a0\u00a0\u00a0"  # non-breaking spaces: gap between labels and bars
     t = heat.set_index("sauce").reindex(["original", "green", "spicy_yellow", "super_hot"])
     ticks, rates, lo, hi, colors = [], [], [], [], []
     for s, r in t.iterrows():
         n = int(r["n_heat"]) if pd.notna(r["n_heat"]) else 0
         if n >= MIN_N_BAR:
-            ticks.append(f"<b>{SAUCE_NAMES[s]}</b><br>{r['too_mild']:.0%} · n={n}")
+            count = f"{n} reviews" if plain else f"n={n}"
+            ticks.append(f"<b>{SAUCE_NAMES[s]}</b>{pad}<br>"
+                         f"{r['too_mild']:.0%} · {count}{pad}")
             rates.append(r["too_mild"])
             lo.append(r["too_mild"] - r["too_mild_lo"])
             hi.append(r["too_mild_hi"] - r["too_mild"])
+        elif plain:
+            continue
         else:
-            ticks.append(f"<b>{SAUCE_NAMES[s]}</b><br>too few (n={n})")
+            ticks.append(f"<b>{SAUCE_NAMES[s]}</b>{pad}<br>too few (n={n}){pad}")
             rates.append(0)
             lo.append(0)
             hi.append(0)
@@ -304,15 +323,14 @@ def heat_gap_figure(heat: pd.DataFrame, show_ci: bool = True) -> go.Figure:
                      color=INK, thickness=1.5, width=6),
         hovertemplate="%{x:.0%} milder than expected<extra></extra>",
     ))
-    fig = _base(fig, 320)
+    fig = _base(fig, 320 if len(ticks) > 3 else 260)
     fig.update_layout(bargap=0.35)
     fig.update_xaxes(tickformat=".0%", range=[0, min(1, upper * 1.1 + 0.02)],
                      gridcolor=LINE, showgrid=True, nticks=6,
                      title_text="Milder than expected", title_font=dict(size=12))
-    fig.update_yaxes(showgrid=False, automargin=True, ticksuffix="  ",
+    fig.update_yaxes(showgrid=False, automargin=True,
                      tickfont=dict(color=INK, size=13, family="IBM Plex Mono, monospace"))
     return fig
-
 
 def changepoint_figure(cp: dict, mark_split: bool = True, height: int = 360) -> go.Figure:
     """Trailing six-month share of Super Hot heat reviews calling it milder.
@@ -354,11 +372,19 @@ def changepoint_figure(cp: dict, mark_split: bool = True, height: int = 360) -> 
     return fig
 
 
+
+def graph(fig, **kw):
+    """dcc.Graph with an explicit height taken from the figure. Older Dash
+    versions give a responsive graph's container no height of its own, so
+    the chart overflows onto the content below it."""
+    return dcc.Graph(figure=fig, style={"height": f"{fig.layout.height or 320}px"},
+                     config={"displayModeBar": False, "responsive": True}, **kw)
+
 ################################################################################
 # Shared chrome: header, nav, section heads, footer
 ################################################################################
 OVERVIEW_SECTIONS = [
-    ("sec-heat", "Is Super Hot Hot?"),
+    ("sec-heat", "Super Hot Fans"),
     ("sec-time", "Over Time"),
     ("sec-sauces", "The Four Sauces"),
     ("sec-aspects", "What People Say"),
@@ -366,6 +392,7 @@ OVERVIEW_SECTIONS = [
     ("sec-fans", "The Fans"),
     ("sec-howto", "How to Read"),
 ]
+
 TECH_SECTIONS = [
     ("tech-heat", "Heat Comparison"),
     ("tech-time", "Over Time"),
@@ -425,8 +452,9 @@ def overview_header(app: Dash, data):
             html.P(
                 "We read every Amazon review of Gringo Bandito's four sauces and scored "
                 "what each one says about heat, flavor, vinegar, value and how people use "
-                "it. One sauce stands out: the one named Super Hot is the one buyers most "
-                "often say isn't as hot as they expected.",
+                "it. Buyers love the flavor, and when they compare it with the big names, "
+                "they mostly pick Gringo Bandito. The one thing they keep asking for: more "
+                "heat in Super Hot.",
                 className="lede",
             ),
         ]),
@@ -455,11 +483,22 @@ def nav_label():
     return html.Span("Jump to", className="nav-label")
 
 
+def report_button():
+    # Same ids on both pages; only one page is rendered at a time.
+    return [
+        *([html.A("⤓  Report card", id="dl-report", n_clicks=0,
+                  className="nav-btn", title="One-page PDF of what customers say")]
+          if report_card else []),
+        dcc.Download(id="dl-report-file"),
+    ]
+
+
 def overview_nav(tech_path: str):
     return html.Nav(className="page-nav", **{"aria-label": "Sections"}, children=[
         nav_label(),
         *[html.A(label, href=f"#{a}", className="nav-btn") for a, label in OVERVIEW_SECTIONS],
         dcc.Link("Technical details", href=tech_path, className="nav-btn nav-strong"),
+        *report_button(),
     ])
 
 
@@ -468,6 +507,7 @@ def tech_nav(home: str):
         dcc.Link("Back to overview", href=home, className="nav-btn nav-strong"),
         nav_label(),
         *[html.A(label, href=f"#{a}", className="nav-btn") for a, label in TECH_SECTIONS],
+        *report_button(),
     ])
 
 
@@ -508,32 +548,32 @@ def heat_story(data) -> str:
     g = data.summary.get("heat_gap", {}).get("single", {})
     if not g:
         return "Results appear here once the pipeline has run."
-    chance = (" A gap that large is very unlikely to be chance."
-              if _ok(g.get("fisher_p")) and g["fisher_p"] < 0.05 else
-              " With this few reviews, the gap could still be chance.")
-    return (f"About {g['rate_a']:.0%} of buyers who talked about Super Hot's heat said it "
-            f"was milder than they expected, compared with {g['rate_b']:.0%} for "
-            f"Original Red.{chance}")
-
+    text = (f"About {g['rate_a']:.0%} of buyers who talked about Super Hot's heat wanted "
+            f"more of it, compared with {g['rate_b']:.0%} for Original Red.")
+    st = data.summary.get("super_hot_stars", {})
+    mild, exp = st.get("too_mild"), st.get("as_expected")
+    if mild and exp:
+        text += (f" They still liked it, at {mild['mean']:.1f} stars on average, but buyers "
+                 f"who got the heat they expected gave it {exp['mean']:.1f}. Living up to the "
+                 "name is worth about a star.")
+    return text
 
 def overview_heat(data, tech_path):
     return html.Section(className="card hero", children=[
-        section_head("Is Super Hot actually super hot?", "sec-heat", tech_path,
+        section_head("Super Hot fans want it hotter", "sec-heat", tech_path,
                      "tech-heat", "xl"),
         html.P(
             "Of the reviews that talk about heat, the share saying the sauce was milder "
-            "than they expected. The sauces with milder names mostly deliver what people "
-            "expect. The one named Super Hot is where expectations and experience part ways.",
+            "than they expected. Original Red and Green Habanero mostly deliver what people "
+            "expect. Super Hot's buyers are asking for more.",
             className="body",
         ),
-        dcc.Graph(figure=heat_gap_figure(data.heat_single, show_ci=False),
-                  config={"displayModeBar": False, "responsive": True}),
+        dcc.Graph(figure=heat_gap_figure(data.heat_single, show_ci=False, plain=True)),
         html.P(heat_story(data), className="callout"),
-        html.P("Counts only reviews about a single sauce, so each verdict clearly belongs "
-               "to it.",
+        html.P("Percentages count only reviews about a single sauce, so each verdict clearly "
+               "belongs to it. Star averages use every Super Hot review that mentions heat.",
                className="note"),
     ])
-
 
 def overview_time(data, tech_path):
     cp = data.changepoint
@@ -554,8 +594,7 @@ def overview_time(data, tech_path):
                "than expected, over time. Each point covers the six months before it; the "
                "shaded ribbon is the range the true share likely falls in.",
                className="body"),
-        dcc.Graph(figure=changepoint_figure(cp, mark_split=False),
-                  config={"displayModeBar": False, "responsive": True}),
+        graph(changepoint_figure(cp, mark_split=False)),
         html.P(reading, className="callout"),
     ])
 
@@ -909,8 +948,7 @@ def tech_heat(data):
             value="single", className="pills", inputClassName="pill-input",
             labelClassName="pill",
         ),
-        dcc.Graph(id="heat-gap", figure=heat_gap_figure(data.heat_single),
-                  config={"displayModeBar": False, "responsive": True}),
+        graph(heat_gap_figure(data.heat_single), id="heat-gap"),
         html.P("The capped horizontal lines are 95% Wilson confidence intervals (CI) for "
                "the estimated share of heat reviews calling each sauce milder than expected. "
                "They show uncertainty in that proportion, not outliers or the spread of "
@@ -963,8 +1001,7 @@ def tech_time(data):
                "reviews, a single change point in the milder-than-expected rate is located "
                "by maximum likelihood (at least 15 reviews per side), tested against "
                "shuffled dates, and dated by bootstrap.", className="body"),
-        dcc.Graph(figure=changepoint_figure(cp),
-                  config={"displayModeBar": False, "responsive": True}),
+        graph(changepoint_figure(cp)),
         *split_stats(cp),
         html.P(verdict, className="mono small muted"),
         html.P(reading, className="callout") if reading else None,
@@ -1137,6 +1174,17 @@ def build_app(data_dir=None, prefix: str | None = None) -> Dash:
     def switch_heat_view(view):
         t = data.heat_single if view == "single" else data.heat
         return heat_gap_figure(t), heat_stats(data, view)
+
+    @app.callback(Output("dl-report-file", "data"), Input("dl-report", "n_clicks"),
+                  prevent_initial_call=True)
+    def download_report(_n):
+        if report_card is None:
+            return no_update
+        from flask import request
+        scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+        url = f"{scheme}://{request.host}{prefix}"
+        pdf = report_card.build_report_card(data, url=url, author=AUTHOR)
+        return dcc.send_bytes(pdf, "gringo_bandito_customer_report_card.pdf")
 
     return app
 

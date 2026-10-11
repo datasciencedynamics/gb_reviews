@@ -231,7 +231,7 @@ app:
 export_flask_apps:
 	@test -n "$(FLASK_APPS)" || (echo "Set FLASK_APPS=/path/to/flask_apps" && exit 1)
 	mkdir -p $(FLASK_APPS)/gb_reviews/data
-	cp app/app.py $(FLASK_APPS)/gb_reviews/
+	cp app/app.py app/report_card.py $(FLASK_APPS)/gb_reviews/
 	cp -r app/assets $(FLASK_APPS)/gb_reviews/
 	cp $(APP_DATA_DIR)/*.parquet $(APP_DATA_DIR)/*.json $(FLASK_APPS)/gb_reviews/data/
 	@echo "Copied to $(FLASK_APPS)/gb_reviews"

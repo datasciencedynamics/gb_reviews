@@ -252,12 +252,18 @@ def main(
     competitor_table(df).to_parquet(output_dir / "competitors.parquet", index=False)
     fans_table(df).to_parquet(output_dir / "fans.parquet", index=False)
 
+    sh = df[df["sauces"].map(lambda s: "super_hot" in s)
+            & df["heat_direction"].isin(["too_mild", "as_expected", "too_hot"])]
+    super_hot_stars = {d: {"n": int(g.size), "mean": float(g.mean())}
+                       for d, g in sh.groupby("heat_direction")["rating"]}
+    
     summary = {
         "scopes": summary_table(df),
         "citation": DATASET_CITATION,
         "shu_sources": SHU_SOURCES,
         "validation": validation_summary(validation_file),
         "heat_gap": {"all": heat_gap(heat_all), "single": heat_gap(heat_single)},
+        "super_hot_stars": super_hot_stars,
     }
     for view, g in summary["heat_gap"].items():
         if g:
