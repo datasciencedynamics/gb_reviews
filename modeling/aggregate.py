@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 import typer
+from scipy import stats
 
 from core.config import DATASET_CITATION
 from core.constants import (
@@ -101,10 +102,14 @@ def aspect_table(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def heat_table(df: pd.DataFrame) -> pd.DataFrame:
+def heat_table(df: pd.DataFrame, single: bool = False) -> pd.DataFrame:
+    """Heat direction shares per sauce. single=True keeps only reviews that
+    discuss exactly one sauce, so a review's heat verdict is unambiguous."""
     rows = []
     for s in SAUCE_KEYS:
         d = scoped(df, s)
+        if single:
+            d = d[d["sauces"].map(len) == 1]
         h = d[d["heat_direction"] != "not_mentioned"]
         n = len(h)
         row = {
@@ -114,6 +119,7 @@ def heat_table(df: pd.DataFrame) -> pd.DataFrame:
             "earlier_shu": EARLIER_SHU[s],
             "lab_shu": LAB_SHU[s],
             "n_heat": n,
+            "k_too_mild": int((h["heat_direction"] == "too_mild").sum()),
         }
         for direction in ("too_mild", "as_expected", "too_hot"):
             k = int((h["heat_direction"] == direction).sum())
@@ -124,6 +130,23 @@ def heat_table(df: pd.DataFrame) -> pd.DataFrame:
             row[f"{direction}_hi"] = hi if ok else float("nan")
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def heat_gap(table: pd.DataFrame, a: str = "super_hot", b: str = "original") -> dict:
+    """Fisher exact test of 'milder than expected' between two sauces."""
+    t = table.set_index("sauce")
+    ka, na = int(t.loc[a, "k_too_mild"]), int(t.loc[a, "n_heat"])
+    kb, nb = int(t.loc[b, "k_too_mild"]), int(t.loc[b, "n_heat"])
+    if min(na, nb) == 0:
+        return {}
+    _, p = stats.fisher_exact([[ka, na - ka], [kb, nb - kb]])
+    return {
+        "a": a, "b": b,
+        "rate_a": ka / na, "n_a": na,
+        "rate_b": kb / nb, "n_b": nb,
+        "diff": ka / na - kb / nb,
+        "fisher_p": float(p),
+    }
 
 
 def foods_table(df: pd.DataFrame, top: int = 15) -> pd.DataFrame:
@@ -198,11 +221,13 @@ def validation_summary(path: Path) -> dict:
         "check_model": v.get("check_model"),
         "label_coverage": v.get("label_coverage"),
         "star_rho": {a: r["rho"] for a, r in v.get("star_validity", {}).items()},
+        "star_n": {a: r["n"] for a, r in v.get("star_validity", {}).items()},
     }
     agr = v.get("agreement")
     if agr:
         out["n_overlap"] = agr["n_overlap"]
         out["kappa"] = {f: r["kappa"] for f, r in agr["fields"].items()}
+        out["agreement"] = {f: r["agreement"] for f, r in agr["fields"].items()}
     return out
 
 
@@ -219,7 +244,10 @@ def main(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     aspect_table(df).to_parquet(output_dir / "aspects.parquet", index=False)
-    heat_table(df).to_parquet(output_dir / "heat.parquet", index=False)
+    heat_all = heat_table(df)
+    heat_single = heat_table(df, single=True)
+    heat_all.to_parquet(output_dir / "heat.parquet", index=False)
+    heat_single.to_parquet(output_dir / "heat_single.parquet", index=False)
     foods_table(df).to_parquet(output_dir / "foods.parquet", index=False)
     competitor_table(df).to_parquet(output_dir / "competitors.parquet", index=False)
     fans_table(df).to_parquet(output_dir / "fans.parquet", index=False)
@@ -229,7 +257,14 @@ def main(
         "citation": DATASET_CITATION,
         "shu_sources": SHU_SOURCES,
         "validation": validation_summary(validation_file),
+        "heat_gap": {"all": heat_gap(heat_all), "single": heat_gap(heat_single)},
     }
+    for view, g in summary["heat_gap"].items():
+        if g:
+            typer.echo(
+                f"Super Hot vs Original ({view}): {g['rate_a']:.0%} (n={g['n_a']}) vs "
+                f"{g['rate_b']:.0%} (n={g['n_b']}), Fisher p = {g['fisher_p']:.2g}"
+            )
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=float))
 
     if changepoint_file.is_file():

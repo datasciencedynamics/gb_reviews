@@ -154,3 +154,4 @@ images/
 --stdin*/
 /lib
 .data/
+reports/

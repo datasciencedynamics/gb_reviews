@@ -9,6 +9,7 @@ VENV_DIR = gb_venv
 CONDA_ENV_NAME = conda_gb
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PROJECT_DIRECTORY := $(abspath $(MAKEFILE_DIR))
+export PYTHONPATH := $(PROJECT_DIRECTORY)
 
 RAW_META       ?= $(PROJECT_DIRECTORY)/data/raw/gb_meta.jsonl
 RAW_REVIEWS    ?= $(PROJECT_DIRECTORY)/data/raw/gb_reviews.jsonl
@@ -16,6 +17,12 @@ PROCESSED_DATA ?= $(PROJECT_DIRECTORY)/data/processed/reviews.parquet
 LABELS         ?= $(PROJECT_DIRECTORY)/data/interim/labels_primary.jsonl
 LABELS_CHECK   ?= $(PROJECT_DIRECTORY)/data/interim/labels_check.jsonl
 APP_DATA_DIR   ?= $(PROJECT_DIRECTORY)/data/app
+LABELS_DRYRUN       = $(PROJECT_DIRECTORY)/data/interim/labels_dryrun.jsonl
+LABELS_CHECK_DRYRUN = $(PROJECT_DIRECTORY)/data/interim/labels_check_dryrun.jsonl
+## LIMIT > 0 is a dry run: it writes to a scratch file, wiped first, so it always runs
+DRYRUN           = $(if $(filter 0,$(strip $(LIMIT))),,1)
+LABELS_OUT       = $(if $(DRYRUN),$(LABELS_DRYRUN),$(LABELS))
+LABELS_CHECK_OUT = $(if $(DRYRUN),$(LABELS_CHECK_DRYRUN),$(LABELS_CHECK))
 
 ############################## Labeling Globals ################################
 
@@ -30,6 +37,7 @@ LIMIT         ?= 0                  # 0 = all reviews; >0 for a dry run
 CP_SAUCE      ?= super_hot
 CP_BOOTSTRAPS ?= 1000
 APP_PORT      ?= 8050
+FORCE         ?= 0   # 1 = redo a step even if its output exists
 
 # ------------------------------------------------------------------------------
 # COMMANDS
@@ -98,17 +106,19 @@ clean_dir:
 ############################## Data Pipeline ###################################
 ################################################################################
 
-## Stream Amazon Reviews'23 and keep Gringo Bandito rows (slow, run once)
+## Stream Amazon Reviews'23 and keep Gringo Bandito rows (slow; FORCE=1 to re-pull)
 .PHONY: data_gen
-data_gen: $(RAW_REVIEWS)
-
-$(RAW_REVIEWS):
-	@mkdir -p data/raw
-	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/data_gen.py \
-		--meta-out $(RAW_META) \
-		--reviews-out $(RAW_REVIEWS) \
-	2>&1 | tee data/raw/data_gen.txt
-
+data_gen:
+	@if [ -f $(RAW_REVIEWS) ] && [ "$(FORCE)" != "1" ]; then \
+		echo "Raw data already at $(RAW_REVIEWS); skipping. Use 'make data_gen FORCE=1' to re-pull."; \
+	else \
+		mkdir -p data/raw; \
+		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/data_gen.py \
+			--meta-out $(RAW_META) \
+			--reviews-out $(RAW_REVIEWS) \
+		2>&1 | tee data/raw/data_gen.txt; \
+	fi
+	
 ## Clean reviews, map each listing to a sauce, write Parquet
 .PHONY: preprocess
 preprocess:
@@ -129,9 +139,14 @@ preproc_pipeline: data_gen preprocess
 .PHONY: label_primary
 label_primary:
 	@mkdir -p data/interim
+	@rm -f $(LABELS_DRYRUN)
+	@if [ "$(FORCE)" = "1" ] && [ -f $(LABELS) ]; then \
+		mv $(LABELS) $(LABELS).$$(date +%Y%m%d_%H%M%S).bak; \
+		echo "Moved existing labels to a .bak file; relabeling from scratch."; \
+	fi
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/labeling/label_reviews.py \
 		--input-data-file $(PROCESSED_DATA) \
-		--output-file $(LABELS) \
+		--output-file $(LABELS_OUT) \
 		--model $(PRIMARY_MODEL) \
 		--sample-frac 1.0 \
 		--concurrency $(CONCURRENCY) \
@@ -142,9 +157,14 @@ label_primary:
 .PHONY: label_check
 label_check:
 	@mkdir -p data/interim
+	@rm -f $(LABELS_CHECK_DRYRUN)
+	@if [ "$(FORCE)" = "1" ] && [ -f $(LABELS_CHECK) ]; then \
+		mv $(LABELS_CHECK) $(LABELS_CHECK).$$(date +%Y%m%d_%H%M%S).bak; \
+		echo "Moved existing labels to a .bak file; relabeling from scratch."; \
+	fi
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/labeling/label_reviews.py \
 		--input-data-file $(PROCESSED_DATA) \
-		--output-file $(LABELS_CHECK) \
+		--output-file $(LABELS_CHECK_OUT) \
 		--model $(CHECK_MODEL) \
 		--sample-frac $(CHECK_FRAC) \
 		--concurrency $(CONCURRENCY) \
@@ -211,7 +231,7 @@ app:
 export_flask_apps:
 	@test -n "$(FLASK_APPS)" || (echo "Set FLASK_APPS=/path/to/flask_apps" && exit 1)
 	mkdir -p $(FLASK_APPS)/gb_reviews/data
-	cp app/__init__.py app/app.py app/data.py app/layout.py app/figures.py $(FLASK_APPS)/gb_reviews/
+	cp app/app.py $(FLASK_APPS)/gb_reviews/
 	cp -r app/assets $(FLASK_APPS)/gb_reviews/
 	cp $(APP_DATA_DIR)/*.parquet $(APP_DATA_DIR)/*.json $(FLASK_APPS)/gb_reviews/data/
 	@echo "Copied to $(FLASK_APPS)/gb_reviews"

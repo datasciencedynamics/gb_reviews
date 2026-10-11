@@ -110,17 +110,25 @@ def test_full_cli_chain(synthetic, monkeypatch):
         if p.suffix == ".parquet":
             assert "text" not in pd.read_parquet(p).columns
 
-    from app.app import create_app
-    dash_app = create_app(data_dir=out)
-    cb = next(iter(dash_app.callback_map.values()))
-    assert cb is not None
-    assert "Did Super Hot cool off?" in str(dash_app.layout)
+    from app.app import load_data, overview_layout, technical_layout, build_app
+    dash_app = build_app(data_dir=out)
+    data = load_data(out)
+    overview = str(overview_layout(dash_app, data, "/", "/technical"))
+    technical = str(technical_layout(dash_app, data, "/", "/technical"))
+    assert "Is Super Hot actually super hot?" in overview
+    assert "Cohen's kappa" in technical and "heat-view" in technical
+    assert "heat-view" not in overview  # technical controls stay off the overview
+    single = pd.read_parquet(out / "heat_single.parquet").set_index("sauce")
+    assert single.loc["super_hot", "too_mild"] > single.loc["original", "too_mild"]
+    assert summary["heat_gap"]["single"]["fisher_p"] < 0.05
 
 
 def test_app_renders_without_data(tmp_path):
-    from app.app import create_app
-    dash_app = create_app(data_dir=tmp_path)
-    assert "No pipeline output found" in str(dash_app.layout)
+    from app.app import build_app, load_data, overview_layout, technical_layout
+    dash_app = build_app(data_dir=tmp_path)
+    data = load_data(tmp_path)
+    assert "No pipeline output found" in str(overview_layout(dash_app, data, "/", "/technical"))
+    technical_layout(dash_app, data, "/", "/technical")  # renders with no data
 
 
 def test_label_one_parses_tool_call():
