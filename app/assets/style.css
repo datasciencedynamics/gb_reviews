@@ -722,3 +722,21 @@ p.muted {
   font-weight: 500;
   color: var(--ink);
 }
+
+/* Pills: beat Dash's own option styles so the text stays centered */
+.pills .dash-options-list-option {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+.pills .pill,
+.pills .dash-options-list-option-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 18px;
+  line-height: 1.2;
+}
